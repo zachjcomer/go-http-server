@@ -23,38 +23,47 @@ func PipeHttpToFunction(f interface{}, w http.ResponseWriter, r *http.Request) e
 		return fmt.Errorf("unable to parse handler into func")
 	}
 
-	input := make([]reflect.Value, fType.NumIn())
+	if fType.NumIn() != 1 || fType.In(0).Kind() != reflect.Struct {
+		return fmt.Errorf("func must have a single struct parameter to associate request with fields")
+	}
 
-	for i := 0; i < fType.NumIn(); i++ {
-		param := fType.In(i)
+	req := reflect.New(fType.In(0))     // Create a struct that will be passed to the func
+	ref := reflect.ValueOf(&req).Elem() // A reference that can be modified
 
-		// struct is only matched with body, body only matched with struct
-		if param.Kind() == reflect.Struct {
-			p, err := decode(w, r, param)
+	fmt.Println(req.Type().Elem())
+
+	for i := 0; i < req.Type().Elem().NumField(); i++ {
+		field := req.Type().Elem().Field(i)
+		fmt.Println(field.Name, field.Type.Name())
+	}
+
+	for i := 0; i < ref.NumField(); i++ {
+		t := ref.Type().Field(i) // Type info to get field name
+		field := ref.Field(i)    // Field to set
+
+		fmt.Println("Can set ", t.Name, ": ", field.CanSet())
+
+		if field.Kind() == reflect.Struct {
+			p, err := decode(w, r, field.Type())
 			if err != nil {
 				return fmt.Errorf("error parsing body: %w", err)
 			}
 
-			input[i] = p
-		} else if param.Kind() == reflect.Pointer {
-			p, err := decode(w, r, param.Elem())
+			field.Set(p)
+		} else if field.Kind() == reflect.Pointer {
+			p, err := decode(w, r, field.Type().Elem())
 			if err != nil {
 				return fmt.Errorf("error parsing body: %w", err)
 			}
 
-			input[i] = p.Addr()
+			field.Set(p)
+		} else if isFieldInHeaders(r, t) {
+			field.Set(reflect.ValueOf(r.Header[t.Name]))
 		}
-		// } else if isKeyInHeaders(r, param) {
-		// 	paramKey := formatHeader(paramN)
-
-		// 	val := r.Header[paramKey]
-
-		// 	input[i] = reflect.ValueOf(val)
-		// }
 	}
 
 	fVal := reflect.ValueOf(f)
-	fVal.Call(input)
+	fVal.Call([]reflect.Value{req})
 
 	// write response
 
@@ -62,14 +71,14 @@ func PipeHttpToFunction(f interface{}, w http.ResponseWriter, r *http.Request) e
 }
 
 // name match + value castable to key type and/or array match of castable type
-func isKeyInHeaders(r *http.Request, key reflect.Type) bool {
-	paramKey := formatHeader(key.Name())
+func isFieldInHeaders(r *http.Request, key reflect.StructField) bool {
+	paramKey := formatHeader(key.Name)
 
 	if r.Header[paramKey] == nil {
 		return false
 	}
 
-	if len(r.Header[paramKey]) > 1 && key.Kind() != reflect.Array {
+	if len(r.Header[paramKey]) > 1 && key.Type.Kind() != reflect.Array {
 		return false
 	}
 
@@ -91,6 +100,3 @@ func decode(w http.ResponseWriter, r *http.Request, t reflect.Type) (reflect.Val
 func formatHeader(key string) string {
 	return cases.Title(language.Und).String(key)
 }
-
-// match body -> should be only struct param in handler
-// fill in remainder with headers and shit

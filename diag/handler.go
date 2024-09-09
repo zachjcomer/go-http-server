@@ -12,7 +12,11 @@ type Diag struct {
 }
 
 func LogHandler(log *log.Logger) http.Handler {
-	return utility.Pipe(func(d *Diag) {
+	return utility.Pipe(func(d LogHandlerRequest) {
 		log.Printf("%+v\n", d)
 	})
+}
+
+type LogHandlerRequest struct {
+	D Diag
 }
