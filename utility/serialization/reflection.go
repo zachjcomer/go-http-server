@@ -27,15 +27,8 @@ func PipeHttpToFunction(f interface{}, w http.ResponseWriter, r *http.Request) e
 		return fmt.Errorf("func must have a single struct parameter to associate request with fields")
 	}
 
-	req := reflect.New(fType.In(0))     // Create a struct that will be passed to the func
-	ref := reflect.ValueOf(&req).Elem() // A reference that can be modified
-
-	fmt.Println(req.Type().Elem())
-
-	for i := 0; i < req.Type().Elem().NumField(); i++ {
-		field := req.Type().Elem().Field(i)
-		fmt.Println(field.Name, field.Type.Name())
-	}
+	argType := reflect.ValueOf(f).Type().In(0)
+	ref := reflect.New(argType).Elem()
 
 	for i := 0; i < ref.NumField(); i++ {
 		t := ref.Type().Field(i) // Type info to get field name
@@ -44,26 +37,24 @@ func PipeHttpToFunction(f interface{}, w http.ResponseWriter, r *http.Request) e
 		fmt.Println("Can set ", t.Name, ": ", field.CanSet())
 
 		if field.Kind() == reflect.Struct {
-			p, err := decode(w, r, field.Type())
+			err := decode(w, r, field)
 			if err != nil {
 				return fmt.Errorf("error parsing body: %w", err)
 			}
-
-			field.Set(p)
 		} else if field.Kind() == reflect.Pointer {
-			p, err := decode(w, r, field.Type().Elem())
+			err := decode(w, r, field)
 			if err != nil {
 				return fmt.Errorf("error parsing body: %w", err)
 			}
 
-			field.Set(p)
+			// field.Set(p)
 		} else if isFieldInHeaders(r, t) {
 			field.Set(reflect.ValueOf(r.Header[t.Name]))
 		}
 	}
 
 	fVal := reflect.ValueOf(f)
-	fVal.Call([]reflect.Value{req})
+	fVal.Call([]reflect.Value{ref})
 
 	// write response
 
@@ -87,14 +78,14 @@ func isFieldInHeaders(r *http.Request, key reflect.StructField) bool {
 	return true
 }
 
-func decode(w http.ResponseWriter, r *http.Request, t reflect.Type) (reflect.Value, error) {
-	targ := reflect.New(t).Elem()
+func decode(w http.ResponseWriter, r *http.Request, t reflect.Value) error {
+	// targ := reflect.New(t).Elem()
 
-	if err := json.NewDecoder(r.Body).Decode(targ.Addr().Interface()); err != nil {
-		return reflect.Zero(t), fmt.Errorf("error decoding request :%w", err)
+	if err := json.NewDecoder(r.Body).Decode(t.Addr().Interface()); err != nil {
+		return fmt.Errorf("error decoding request :%w", err)
 	}
 
-	return targ, nil
+	return nil
 }
 
 func formatHeader(key string) string {
